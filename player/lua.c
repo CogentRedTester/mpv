@@ -337,12 +337,19 @@ static void fuck_lua(lua_State *L, const char *search_path, const char *extra)
     lua_getfield(L, -1, search_path); // package search_path
     bstr path = bstr0(lua_tostring(L, -1));
     char *newpath = talloc_strdup(tmp, "");
+    char **modules_dir = mp_find_all_config_files(tmp, get_mpctx(L)->global, "script-modules");
 
     // Script-directory paths take priority.
     if (extra) {
         newpath = talloc_asprintf_append(newpath, "%s%s",
                                          newpath[0] ? ";" : "",
                                          mp_path_join(tmp, extra, "?.lua"));
+    }
+
+    for (int i = 0; modules_dir && modules_dir[i]; i++) {
+        newpath = talloc_asprintf_append(newpath, "%s%s",
+                                         newpath[0] ? ";" : "",
+                                         mp_path_join(tmp, modules_dir[i], "?.lua"));
     }
 
     // Unbelievable but true: Lua loads .lua files AND dynamic libraries from
