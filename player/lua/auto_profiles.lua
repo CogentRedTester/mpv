@@ -7,6 +7,7 @@ local profiles = {}
 local watched_properties = {}       -- indexed by property name (used as a set)
 local cached_properties = {}        -- property name -> last known raw value
 local properties_to_profiles = {}   -- property name -> set of profiles using it
+local condition_results = {}        -- profile name -> last condition evaluation (boolean)
 local have_dirty_profiles = false   -- at least one profile is marked dirty
 local pending_hooks = {}            -- as set (keys only, meaningless values)
 
@@ -41,6 +42,11 @@ local function evaluate(profile)
             msg.info("Restoring profile: " .. profile.name)
             mp.commandv("apply-profile", profile.name, "restore")
         end
+
+        -- We cannot use mp.set_property_bool on individual profiles because the `/`
+        -- character (valid in profile names) cannot be directly used in a user-data path.
+        condition_results[profile.name] = res
+        mp.set_property_native("user-data/auto_profiles", condition_results)
     end
     profile.status = res
     profile.dirty = false
