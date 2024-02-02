@@ -41,6 +41,7 @@ local function evaluate(profile)
             msg.info("Restoring profile: " .. profile.name)
             mp.commandv("apply-profile", profile.name, "restore")
         end
+        mp.set_property_bool(profile.user_data_key, res)
     end
     profile.status = res
     profile.dirty = false
@@ -164,6 +165,15 @@ local function compile_cond(name, s)
     return chunk
 end
 
+-- escapes the `/` character for user-data key names
+-- uses the escape character sequences from IETF RFC 6901
+local function escape_name(name)
+    return (string.gsub(name, "[~/]", {
+        ["~"] = "~0",
+        ["/"] = "~1",
+    }))
+end
+
 local function load_profiles()
     for i, v in ipairs(mp.get_property_native("profile-list")) do
         local cond = v["profile-cond"]
@@ -174,10 +184,12 @@ local function load_profiles()
                 properties = {},
                 status = nil,
                 dirty = true, -- need re-evaluate
-                has_restore_opt = v["profile-restore"] and v["profile-restore"] ~= "default"
+                has_restore_opt = v["profile-restore"] and v["profile-restore"] ~= "default",
+                user_data_key = "user-data/auto_profiles/"..escape_name(v.name),
             }
             profiles[#profiles + 1] = profile
             have_dirty_profiles = true
+            mp.set_property_bool(profile.user_data_key, false)
         end
     end
 end
