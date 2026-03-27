@@ -261,6 +261,8 @@ end
 -- If a client clears the thumbnail, we don't want an in-transit thumbnail
 -- response to redraw the image.
 local blocked_draws = {}
+local latest_coords = {}
+local latest_thumbnails = {}
 
 function thumbnail.draw(opts)
     opts.id = opts.id or ''
@@ -268,16 +270,38 @@ function thumbnail.draw(opts)
     if not opts.x and not opts.y then
         clear_thumbnail(opts.id)
         blocked_draws[opts.id] = true
+        latest_coords[opts.id] = nil
+        if latest_thumbnails[opts.id] then
+            latest_thumbnails[opts.id]:free()
+            latest_thumbnails[opts.id] = nil
+        end
         return
     end
+
     blocked_draws[opts.id] = false
+    latest_coords[opts.id] = {x = opts.x, y = opts.y}
+    if opts.redraw_immediately and latest_thumbnails[opts.id] then
+        latest_thumbnails[opts.id]:draw({
+            x = opts.x, y = opts.y,
+            w = opts.w, h = opts.h,
+        })
+    end
 
     return thumbnail.generate(opts, function(thumb)
         if not thumb then return end
-        if not blocked_draws[opts.id] then
-            thumb:draw(opts)
+
+        if latest_thumbnails[opts.id] then
+            latest_thumbnails[opts.id]:free()
         end
-        thumb:free()
+        latest_thumbnails[opts.id] = thumb
+
+        if not blocked_draws[opts.id] then
+            thumb:draw({
+                x = opts.redraw_immediately and latest_coords[opts.id].x or opts.x,
+                y = opts.redraw_immediately and latest_coords[opts.id].y or opts.y,
+                w = opts.w, h = opts.h,
+            })
+        end
     end)
 end
 
