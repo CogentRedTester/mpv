@@ -21,6 +21,7 @@ local thumbnail = {}
 
 -- A table of thumbnail-id:overlay-id mappings
 local overlay_ids = {}
+local unfreed_thumbnails = {}
 local handle_counter = 0
 local OVERLAY_ID_MIN = 21
 local OVERLAY_ID_MAX = 63
@@ -126,6 +127,7 @@ function thumbnail_mt:free()
     -- deletes the thumbnail file
     os.remove(self._thumbnail)
     self._status = 'freed'
+    unfreed_thumbnails[self._uid] = nil
 end
 
 local function register_response_handler(opts, cb)
@@ -145,8 +147,10 @@ local function register_response_handler(opts, cb)
             _thumbnail = response.thumbnail,
             _status = 'available',
             _id = opts.id,
+            _uid = handler_id
         }
 
+        unfreed_thumbnails[handler_id] = thumb
         cb(setmetatable(thumb, thumbnail_mt), err)
     end)
 
@@ -194,5 +198,11 @@ function thumbnail.draw(opts)
         thumb:free()
     end)
 end
+
+mp.register_event("shutdown", function()
+    for _, thumb in pairs(unfreed_thumbnails) do
+        thumb:free()
+    end
+end)
 
 return thumbnail
