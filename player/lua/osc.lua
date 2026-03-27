@@ -1,6 +1,8 @@
 local assdraw = require 'mp.assdraw'
 local msg = require 'mp.msg'
 local opt = require 'mp.options'
+package.path = '/home/oscar/code/mpv/player/lua/?.lua;'..package.path
+local thumbnail = require 'thumbnail'
 
 --
 -- Parameters
@@ -74,6 +76,8 @@ local user_opts = {
     small_buttonsR_color = "#FFFFFF", -- color of right small buttons
     top_buttons_color = "#FFFFFF",    -- color of top buttons
     held_element_color = "#999999",   -- color of an element while held down
+
+    max_thumb_size = 400,               -- maximum display size of preview thumbnails
 
     time_pos_outline_color = "#000000",   -- color of the border timecodes in slimbox and TimePosBar
 
@@ -236,6 +240,7 @@ local layouts = {}
 local is_december = os.date("*t").month == 12
 local UNICODE_MINUS = string.char(0xe2, 0x88, 0x92)  -- UTF-8 for U+2212 MINUS SIGN
 local last_custom_button = 0
+local video_out_params = {}
 
 local function osc_color_convert(color)
     return color:sub(6,7) .. color:sub(4,5) ..  color:sub(2,3)
@@ -1156,6 +1161,55 @@ local function render_elements(master_ass)
                     ass_append_alpha(elem_ass, slider_lo.alpha, 0)
                     elem_ass:append(tooltiplabel)
 
+                    -- thumbnail
+                    local isPositive = function(arg) return arg and arg > 0 end
+                    local osd_w, osd_h = mp.get_osd_size()
+                    local vop = video_out_params
+                    local draw_thumbnail = isPositive(osd_w) and
+                                           isPositive(vop.dw) and isPositive(vop.dh)
+                    if draw_thumbnail then
+                        local r_w, r_h = get_virt_scale_factor()
+                        local thumb_max = math.min(user_opts.max_thumb_size,
+                            math.min(osd_w, osd_h) * 0.25)
+                        local thumb_w = math.min(vop.dw > vop.dh and thumb_max or math.huge,
+                            math.floor(vop.dw / vop.dh * thumb_max + 0.5))
+                        local thumb_h = math.min(vop.dw > vop.dh and math.huge or thumb_max,
+                            math.floor(vop.dh / vop.dw * thumb_max + 0.5))
+
+                        local tooltip_font_size = (user_opts.layout == "box" or
+                            user_opts.layout == "slimbox") and 2 or 12
+                        local thumb_ty = user_opts.layout ~= "topbar" and element.hitbox.y1 - 8 or
+                            element.hitbox.y2 + tooltip_font_size + 8
+                        local thumb_tx = tx
+                        local thumb_pad = 4
+                        local thumb_margin_x = 20 / r_w
+                        local thumb_margin_y = (4 + user_opts.tooltipborder) / r_h + thumb_pad
+                        local thumb_x = math.min(osd_w - thumb_w - thumb_margin_x,
+                            math.max(thumb_margin_x, thumb_tx / r_w - thumb_w / 2))
+                        local thumb_y = thumb_ty / r_h + (user_opts.layout ~= "topbar" and
+                            -(thumb_h + tooltip_font_size / r_h + thumb_margin_y) or
+                            thumb_margin_y)
+
+                        if thumbnail.draw({
+                                t = mp.get_property_number("duration", 0) * (sliderpos / 100),
+                                w = math.floor(thumb_w + 0.5), h = math.floor(thumb_h + 0.5),
+                                x = math.floor(thumb_x + 0.5), y = math.floor(thumb_y + 0.5),
+                                redraw_immediately = true,
+                        }) then
+                            elem_ass:new_event()
+                            elem_ass:pos(thumb_x * r_w, thumb_y * r_h)
+                            elem_ass:an(7)
+                            elem_ass:append(osc_styles.timePosBar)
+                            elem_ass:append("{\\1a&H20&}")
+                            elem_ass:draw_start()
+                            elem_ass:rect_cw(-thumb_pad * r_w, -thumb_pad * r_h, (thumb_w+ thumb_pad) * r_w, (thumb_h + thumb_pad) * r_h)
+                            elem_ass:draw_stop()
+                        else
+                            thumbnail.draw({})
+                        end
+                    end
+                else
+                    thumbnail.draw({})
                 end
             end
 
@@ -3102,6 +3156,9 @@ mp.observe_property("chapter-list", "native", function(_, list)
     update_duration_watch()
     request_init()
 end)
+mp.observe_property('video-out-params', 'native', function(_, data)
+    video_out_params = data or {}
+end)
 
 -- These are for backwards compatibility only.
 mp.register_script_message("osc-message", function(message, dur)
@@ -3170,6 +3227,7 @@ mp.register_event("file-loaded", function()
 end)
 mp.add_hook("on_unload", 50, function()
     state.file_loaded = false
+    thumbnail.draw({})
     request_tick()
 end)
 
