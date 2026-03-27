@@ -21,19 +21,101 @@ local thumbnail = {}
 
 -- A table of thumbnail-id:overlay-id mappings
 local overlay_ids = {}
+local thumbnailers = {}
 local unfreed_thumbnails = {}
 local handle_counter = 0
 local OVERLAY_ID_MIN = 21
 local OVERLAY_ID_MAX = 63
+local PLATFORM = mp.get_property("platform")
 
--- This will choose which thumbnailer to send requests to.
--- The selection logic is currently unimplemented, instead it sends it to
--- the first thumbnailer in the table.
-local function choose_thumbnailer(path)
-    local thumbnailers = mp.get_property_native('user-data/mpv/thumbnailers')
+-- Maintains a sorted list of thumbnailers
+mp.observe_property("user-data/mpv/thumbnailers", "native", function(_, thumbs)
+    thumbnailers = {}
+    if type(thumbs) ~= "table" then
+        return
+    end
 
-    -- temporary
-    return next(thumbnailers)
+    for client_name, config in pairs(thumbs) do
+        config.client_name = client_name
+        table.insert(thumbnailers, config)
+
+        for i, path in ipairs(config.paths or {}) do
+            -- We need to use a custom pattern format that can work in both Lua and JS
+            config.paths[i] = path:lower()
+                                  :gsub("\\[\\%-%*%?%[%]]", {       -- escape (our) special chars
+                                    ["\\\\"] = "\0a",   ["\\-"] = "\0b",
+                                    ["\\*"] = "\0c",    ["\\?"] = "\0d",
+                                    ["\\["] = "\0e",    ["\\]"] = "\0f",
+                                    ["\\^"] = "\0g",    ["\\$"] = "\0h",
+                                    ["\\+"] = "\0i"
+                                  })
+                                  :gsub("\\", "")                   -- remove backslashes from anywhere else
+                                  :gsub("([%(%)%%%.%-])", "%%%1")   -- escape lua special chars
+
+                                  :gsub("%%%-%%%-", "-")
+                                  :gsub("%*%?", "-")
+                                  :gsub("([+?])%?", "%1%%?")
+                                  :gsub("%[^%]", ".")
+
+                                  :gsub("%z%a", {                   -- Re-add our escaped characters
+                                    ["\0a"] = "\\",     ["\0b"] = "%-",
+                                    ["\0c"] = "%*",     ["\0d"] = "%?",
+                                    ["\0e"] = "%[",     ["\0f"] = "%]",
+                                    ["\0g"] = "%^",     ["\0h"] = "%$",
+                                    ["\0i"] = "%+"
+                                  })
+        end
+    end
+
+    table.sort(thumbnailers, function(a, b)
+            return (tonumber(a.priority) or 50) < (tonumber(b.priority) or 50)
+        end)
+end)
+
+-- We could theoretically implement caching for this later if performance were a concern.
+local function matches_patterns(path, patterns)
+    if not patterns then return true end
+    if PLATFORM == "windows" then
+        path = path:gsub("\\", "/")
+    end
+
+    for _, pattern in ipairs(patterns) do
+        if string.find(path:lower(), pattern) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function matches_ranges(t, ranges)
+    if not ranges then return true end
+
+    for _, range in ipairs(ranges) do
+        if t >= range[1] and t <= range[2] then
+            return true
+        end
+    end
+
+    return false
+end
+
+local function choose_thumbnailer(path, t)
+    if not next(thumbnailers) then return nil end
+
+    local current_file = mp.get_property("path")
+    path = path or current_file
+    if not path then return nil end
+
+    for _, thumbnailer in ipairs(thumbnailers) do
+        if (path == current_file or not thumbnailer.current_file_only)
+                and matches_patterns(path, thumbnailer.paths)
+                and matches_ranges(t, thumbnailer.ranges) then
+            return thumbnailer.client_name
+        end
+    end
+
+    return nil
 end
 
 -- Assigns overlay ids in such a way as to minimise the risk of conflicts with
@@ -160,7 +242,7 @@ end
 function thumbnail.generate(opts, cb)
     opts.id = opts.id or ''
 
-    local thumbnailer = choose_thumbnailer(opts.path)
+    local thumbnailer = choose_thumbnailer(opts.path, opts.t)
     if not thumbnailer then
         return false
     end
